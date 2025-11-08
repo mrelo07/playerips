@@ -1,0 +1,223 @@
+local showMenu = false
+local currentMenu = "main"
+local selectedOptionIndex = 1
+local menuStack = {}
+
+local godmodeEnabled = false
+local spawnVehicleModel = nil
+local spawnVehicleName = ""
+local freecamActive = false
+local playerCoords = nil
+local cam = nil
+
+-- Funkcje (GodMode, Niewidzialność, Teleportacja, itp.)
+local function ToggleGodMode(state)
+    godmodeEnabled = state
+    print("GodMode: " .. tostring(state))
+end
+
+local function ToggleInvisibility(state)
+    local ped = PlayerPedId()
+    SetEntityVisible(ped, not state, false)
+    SetEntityAlpha(ped, state and 0 or 255, false)
+    SetPlayerInvisibleLocally(PlayerId(), state)
+    SetLocalPlayerVisibleLocally(not state)
+end
+
+local function TeleportToWaypoint()
+    local waypoint = GetFirstBlipInfoId(8)
+    if DoesBlipExist(waypoint) then
+        local coords = GetBlipInfoIdCoord(waypoint)
+        SetEntityCoords(PlayerPedId(), coords.x, coords.y, coords.z)
+        print("Teleported to waypoint at: " .. tostring(coords))
+    else
+        print("No waypoint set!")
+    end
+end
+
+local function SpawnVehicle()
+    DisplayOnscreenKeyboard(1, "FMMC_KEY_TIP8", "", "", "", "", "", 20)
+    while UpdateOnscreenKeyboard() ~= 1 and UpdateOnscreenKeyboard() ~= 2 do Wait(0) end
+    if UpdateOnscreenKeyboard() == 1 then
+        local model = GetHashKey(GetOnscreenKeyboardResult())
+        RequestModel(model)
+        while not HasModelLoaded(model) do Wait(0) end
+        local coords = GetEntityCoords(PlayerPedId())
+        local car = CreateVehicle(model, coords.x, coords.y, coords.z, GetEntityHeading(PlayerPedId()), true, false)
+        TaskWarpPedIntoVehicle(PlayerPedId(), car, -1)
+        print("Vehicle spawned: " .. GetOnscreenKeyboardResult())
+    end
+end
+
+-- FiveGuard (Skanowanie obfuskowanych skryptów)
+local function FiveGuard()
+    print("Scanning...")
+    local resources = GetNumResources()
+
+    for i = 0, resources - 1 do
+        local resource = GetResourceByFindIndex(i)
+        local files = GetNumResourceMetadata(resource, 'client_script')
+
+        for j = 0, files - 1 do
+            local script = GetResourceMetadata(resource, 'client_script', j)
+            if script and string.find(script, "obfuscated") then
+                print("AC: FiveGuard")
+                print("Source: " .. resource)
+                StopResource(resource)
+                print("Zatrzymano zasób: " .. resource)
+            end
+        end
+
+        Citizen.Wait(100)
+    end
+
+    print("Skanowanie zakończone.")
+end
+
+-- FreeCam (Obsługa kamery)
+local function SetFreeCamMode(state)
+    freecamActive = state
+    if state then
+        playerCoords = GetEntityCoords(PlayerPedId())
+        SetEntityInvincible(PlayerPedId(), true)
+        SetEntityVisible(PlayerPedId(), false, false)
+    else
+        SetEntityInvincible(PlayerPedId(), false)
+        SetEntityVisible(PlayerPedId(), true, false)
+        SetEntityCoords(PlayerPedId(), playerCoords.x, playerCoords.y, playerCoords.z)
+    end
+end
+
+-- Pobranie graczy w pobliżu
+local function GetPlayersInRange()
+    local players = {}
+    local playerPed = PlayerPedId()
+    local playerCoords = GetEntityCoords(playerPed)
+
+    for i = 0, 255 do
+        if NetworkIsPlayerActive(i) then
+            local targetPed = GetPlayerPed(i)
+            local targetCoords = GetEntityCoords(targetPed)
+            local distance = #(targetCoords - playerCoords)
+            if distance < 100.0 then
+                table.insert(players, i)
+            end
+        end
+    end
+    return players
+end
+
+-- Funkcja menu
+menuOptions = {
+    ["main"] = {
+        { label = "Gracz", nextMenu = "player" },
+        { label = "Pojazdy", nextMenu = "pojazdy" },
+        { label = "Ustawienia", nextMenu = "ustawienia" },
+        { label = "Gracze w pobliżu", nextMenu = "gracze" },
+        { label = "Trigger: Revive", nextMenu = "trigger" }
+    },
+    ["player"] = {
+        { label = "GodMode", toggle = true, state = godmodeEnabled, onToggle = ToggleGodMode },
+        { label = "Niewidzialność", toggle = true, state = false, onToggle = ToggleInvisibility },
+        { label = "Teleport do Waypointa", action = TeleportToWaypoint }
+    },
+    ["pojazdy"] = {
+        { label = "Spawnuj pojazd (wpisz model)", action = SpawnVehicle }
+    },
+    ["ustawienia"] = {
+        { label = "FiveGuard", action = function()
+            FiveGuard()
+        end }
+    },
+    ["gracze"] = {
+        { label = "Gracze w pobliżu", action = function()
+            local players = GetPlayersInRange()
+            for _, player in ipairs(players) do
+                print("Gracz w pobliżu: " .. GetPlayerName(player))
+            end
+        end },
+        { label = "Teleportuj wszystkich do mnie", action = function()
+            local players = GetPlayersInRange()
+            local playerPed = PlayerPedId()
+            local coords = GetEntityCoords(playerPed)
+
+            for _, player in ipairs(players) do
+                local targetPed = GetPlayerPed(player)
+                SetEntityCoordsNoOffset(targetPed, coords.x, coords.y, coords.z, true, true, true)
+                print("Teleportowałem gracza: " .. GetPlayerName(player))
+            end
+        end }
+    },
+    ["trigger"] = {
+        { label = "Revive", action = function()
+            TriggerEvent('esx_ambulancejob:revive')
+            TriggerEvent('esx_ambulancejob:revive', nil, '871u89247891798717293871')
+            TriggerEvent('waves-ambulancejob:revive')
+            print("Revive trigger executed")
+        end }
+    }
+}
+
+-- Funkcja do wyświetlania tekstu w menu
+function drawTxt(text, x, y, scale, center)
+    SetTextFont(0)
+    SetTextProportional(0)
+    SetTextScale(scale, scale)
+    SetTextCentre(center)
+    SetTextColour(255, 255, 255, 255)
+    SetTextOutline()
+    BeginTextCommandDisplayText("STRING")
+    AddTextComponentSubstringPlayerName(text)
+    EndTextCommandDisplayText(x, y)
+end
+
+-- Główna pętla menu
+Citizen.CreateThread(function()
+    while true do
+        Wait(0)
+
+        if IsControlJustReleased(0, 244) then 
+            showMenu = not showMenu
+            if showMenu and currentMenu == "teleport" then
+                GetPlayersInRange()
+            end
+        end
+
+        if showMenu then
+            drawTxt("~b~#FILIPEK", 0.85, 0.05, 0.6, true)
+            local options = menuOptions[currentMenu] or {}
+
+            for i, opt in ipairs(options) do
+                local prefix = (selectedOptionIndex == i) and "> " or "  "
+                local label = opt.label
+                if opt.toggle ~= nil then
+                    label = label .. " [" .. (opt.state and "ON" or "OFF") .. "]"
+                end
+                drawTxt(prefix .. label, 0.83, 0.15 + i * 0.03, 0.4, false)
+            end
+
+            if IsControlJustPressed(0, 172) then
+                selectedOptionIndex = selectedOptionIndex - 1
+                if selectedOptionIndex < 1 then selectedOptionIndex = #options end
+            end
+            if IsControlJustPressed(0, 173) then
+                selectedOptionIndex = selectedOptionIndex + 1
+                if selectedOptionIndex > #options then selectedOptionIndex = 1 end
+            end
+
+            if IsControlJustPressed(0, 191) then
+                local selectedOption = options[selectedOptionIndex]
+                if selectedOption then
+                    if selectedOption.onToggle then
+                        selectedOption.onToggle(not selectedOption.state)
+                    elseif selectedOption.action then
+                        selectedOption.action()
+                    elseif selectedOption.nextMenu then
+                        currentMenu = selectedOption.nextMenu
+                        table.insert(menuStack, currentMenu)
+                    end
+                end
+            end
+        end
+    end
+end)
